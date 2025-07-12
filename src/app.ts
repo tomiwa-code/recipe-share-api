@@ -6,6 +6,7 @@ import authRouter from "./routes/auth.route";
 import connectDB from "./utils/mongodb";
 import cors from "cors";
 import userRouter from "./routes/user.route";
+import arcjetMiddleware from "./middlewares/arcjet.middleware";
 
 // CORS configuration
 const corsOptions = {
@@ -21,13 +22,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(cors(corsOptions));
+app.use(arcjetMiddleware);
+app.use(errorMiddleware);
 
 // Routes
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/user", userRouter);
-
-// Error middleware for better error handling
-app.use(errorMiddleware);
 
 // Basic route
 app.get("/", (_, res: Response) => {

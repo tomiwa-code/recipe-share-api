@@ -11,4 +11,6 @@ export const {
   MONGO_URI,
   DEFAULT_AVATAR,
   DEFAULT_COVER_PHOTO,
+  ARCJET_KEY,
+  ARCJET_ENV,
 } = process.env;
