@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { customAlphabet } from "nanoid";
+import sharp from "sharp";
 
 // Custom alphabet for readable usernames (removed vowels to avoid accidental words)
 const usernameAlphabet = "bcdfghjklmnpqrstvwxyz23456789";
@@ -42,4 +43,17 @@ export const generateUniqueUsername = async (
   } while (exists);
 
   return newUsername;
+};
+
+// Optimize and convert image buffer to WebP format with specified dimensions and quality
+export const optimizeImage = async (buffer: Buffer): Promise<Buffer> => {
+  try {
+    return await sharp(buffer)
+      .resize(1200, 900, { fit: "inside", withoutEnlargement: true })
+      .webp({ quality: 80 })
+      .toBuffer();
+  } catch (error) {
+    console.error("Image optimization failed", error);
+    throw new Error("Failed to process image");
+  }
 };

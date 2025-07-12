@@ -2,11 +2,14 @@ import express, { Response } from "express";
 import cookieParser from "cookie-parser";
 import { CLIENT_URL, PORT } from "./config/env";
 import errorMiddleware from "./middlewares/error.middleware";
-import authRouter from "./routes/auth.route";
 import connectDB from "./utils/mongodb";
 import cors from "cors";
-import userRouter from "./routes/user.route";
 import arcjetMiddleware from "./middlewares/arcjet.middleware";
+
+
+import userRouter from "./routes/user.route";
+import authRouter from "./routes/auth.route";
+import recipeRouter from "./routes/recipe.route";
 
 // CORS configuration
 const corsOptions = {
@@ -28,6 +31,7 @@ app.use(errorMiddleware);
 // Routes
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/user", userRouter);
+app.use("/api/v1/recipe", recipeRouter);
 
 // Basic route
 app.get("/", (_, res: Response) => {

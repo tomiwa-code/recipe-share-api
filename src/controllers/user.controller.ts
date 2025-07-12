@@ -34,6 +34,12 @@ export const getUser = asyncHandler(async (req, res) => {
   });
 });
 
+/**
+ * @desc Fetch all user.
+ * @route GET /api/v1/user
+ * @access Private (only admins)
+ * @returns {Object} - User details.
+ */
 export const getUsers = asyncHandler(async (req, res, next) => {
   const users = await User.find().select("-password -token -updatedAt -__v");
 

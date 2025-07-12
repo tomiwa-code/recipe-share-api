@@ -1,8 +1,8 @@
-import express from "express";
+import { Router } from "express";
 import { getUser, getUsers } from "../controllers/user.controller";
 import { admin, protect } from "../middlewares/auth.middleware";
 
-const userRouter = express.Router();
+const userRouter = Router();
 
 // Public routes
 userRouter.get("/:username", getUser);
