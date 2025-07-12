@@ -7,6 +7,9 @@ import mongoose from "mongoose";
 import { optimizeImage } from "../utils/helper";
 import cloudinary from "../config/cloudinary";
 
+// Constants
+export const creatorFields = "_id name avatar location role"; // Fields to populate for recipe creator
+
 /**
  * @desc Create a recipe.
  * @route POST /api/v1/recipe/create
@@ -88,11 +91,10 @@ export const createRecipe = withTransaction(
     try {
       // Optimize and upload image to Cloudinary
       const optimizedImage = await optimizeImage(req.file.buffer);
-
-      // Convert buffer to base64 and prepend data URI
       const base64Image = `data:image/webp;base64,${optimizedImage.toString(
         "base64"
       )}`;
+
       const uploadResult = await cloudinary.uploader.upload(base64Image, {
         folder: "recipe-share/recipe-images",
         transformation: [
@@ -113,23 +115,19 @@ export const createRecipe = withTransaction(
             nutritionFacts: nutritionFactsArr,
             ingredients: ingredientsArr,
             instructions: instructionsArr,
-            imageUrl: uploadResult.secure_url,
+            image: {
+              public_id: uploadResult.public_id,
+              url: uploadResult.secure_url,
+            },
             createdBy: req.user._id,
           },
         ],
         { session }
       );
 
-      // Update user's recipe stats
-      await User.findByIdAndUpdate(
-        req.user._id,
-        { $inc: { "stats.recipesShared": 1 } },
-        { session, new: false } // Important: Use same session
-      );
-
       // Populate creator info
       const createdRecipe = await Recipe.findById(recipe[0]._id)
-        .populate("createdBy", "_id name avatar location")
+        .populate("createdBy", creatorFields)
         .session(session);
 
       res.status(201).json({
@@ -148,204 +146,445 @@ export const createRecipe = withTransaction(
   }
 );
 
-// @desc    Get all recipes with filters
-// @route   GET /api/recipes
-// @access  Public
-// export const getRecipes = asyncHandler(async (req, res) => {
-//   const {
-//     search,
-//     difficulty,
-//     cuisine,
-//     maxPrep,
-//     minRating,
-//     sort,
-//     page = 1,
-//     limit = 10,
-//   } = req.query;
+/**
+ * @desc Get all recipes with filters.
+ * @route POST /api/v1/recipe
+ * @query {string} search - Text ?search=query (name, desc, cuisine), ?difficulty, ?maxPrep, ?minRating, ?page, ?limit.
+ * @access Public
+ * @returns {Object} - Recipes details.
+ */
+export const getRecipes = asyncHandler(async (req, res) => {
+  const {
+    search,
+    difficulty,
+    cuisine,
+    maxPrep,
+    minRating,
+    sort,
+    page = 1,
+    limit = 20,
+  } = req.query;
 
-//   let query = {};
-//   let sortOptions = { createdAt: -1 };
+  let query: any = {};
+  let sortOptions: any = { createdAt: -1 }; // Default: newest first
 
-//   // Search filter
-//   if (search) {
-//     query.$text = { $search: search };
-//   }
+  // --- TEXT SEARCH (with fuzzy matching) ---
+  if (search) {
+    query.$text = {
+      $search: search,
+      $caseSensitive: false, // Ignore case
+      $diacriticSensitive: false, // Ignore accents (e.g., "café" matches "cafe")
+    };
+  }
 
-//   // Difficulty filter
-//   if (difficulty) {
-//     query.difficulty = difficulty;
-//   }
+  // --- FILTERS ---
+  if (difficulty) query.difficulty = difficulty;
+  if (typeof cuisine === "string") query.cuisine = new RegExp(cuisine, "i");
+  if (maxPrep) query.prepTime = { ...query.prepTime, $lte: Number(maxPrep) };
+  if (minRating) query.rating = { ...query.rating, $gte: Number(minRating) };
 
-//   // Cuisine filter
-//   if (cuisine) {
-//     query.cuisine = new RegExp(cuisine, "i");
-//   }
+  // --- SORTING ---
+  if (sort === "newest") sortOptions = { createdAt: -1 };
+  else if (sort === "oldest") sortOptions = { createdAt: 1 };
+  else if (sort === "rating") sortOptions = { rating: -1 };
+  else if (sort === "prepTime") sortOptions = { prepTime: 1 };
+  else if (search) {
+    // Sort by text relevance ONLY if searching
+    sortOptions = { score: { $meta: "textScore" } };
+  }
 
-//   // Max preparation time
-//   if (maxPrep) {
-//     query.prepTime = { ...query.prepTime, $lte: Number(maxPrep) };
-//   }
+  // --- PAGINATION ---
+  const pageNum = Number(page);
+  const limitNum = Number(limit);
+  const skip = (pageNum - 1) * limitNum;
 
-//   // Minimum rating
-//   if (minRating) {
-//     query.rating = { ...query.rating, $gte: Number(minRating) };
-//   }
+  // --- DATABASE QUERY ---
+  const total = await Recipe.countDocuments(query);
+  const recipes = await Recipe.find(
+    query,
+    search ? { score: { $meta: "textScore" } } : {} // Include relevance score if searching
+  )
+    .populate("createdBy", creatorFields)
+    .sort(sortOptions)
+    .skip(skip)
+    .limit(limitNum);
 
-//   // Sorting options
-//   if (sort === "newest") {
-//     sortOptions = { createdAt: -1 };
-//   } else if (sort === "oldest") {
-//     sortOptions = { createdAt: 1 };
-//   } else if (sort === "rating") {
-//     sortOptions = { rating: -1 };
-//   } else if (sort === "prepTime") {
-//     sortOptions = { prepTime: 1 };
-//   }
+  // --- RESPONSE ---
+  res.status(201).json({
+    success: true,
+    message:
+      recipes.length > 0 ? "Recipes fetched successfully" : "No recipes found",
+    data: recipes,
+    page: pageNum,
+    pages: Math.ceil(total / limitNum),
+    total,
+  });
+});
 
-//   const pageNum = Number(page);
-//   const limitNum = Number(limit);
-//   const skip = (pageNum - 1) * limitNum;
+/**
+ * @desc Get single recipe.
+ * @route GET /api/recipe/:id
+ * @param {string} id - Recipe ID.
+ * @access Public
+ * @returns {Object} - Recipes details.
+ */
+export const getRecipeById = asyncHandler(async (req, res) => {
+  const recipe = await Recipe.findById(req.params.id)
+    .populate("createdBy", creatorFields) // Populate creator info
+    .populate("savedBy", "username");
 
-//   const total = await Recipe.countDocuments(query);
-//   const recipes = await Recipe.find(query)
-//     .populate("createdBy", "username profilePicture")
-//     .sort(sortOptions)
-//     .skip(skip)
-//     .limit(limitNum);
+  if (!recipe) {
+    res.status(404);
+    throw new Error("Recipe not found");
+  }
 
-//   res.json({
-//     recipes,
-//     page: pageNum,
-//     pages: Math.ceil(total / limitNum),
-//     total,
-//   });
-// });
+  res.status(201).json({
+    success: true,
+    message: "Recipe fetched successfully",
+    data: recipe,
+  });
+});
 
-// @desc    Get single recipe
-// @route   GET /api/recipes/:id
-// @access  Public
-// export const getRecipeById = asyncHandler(async (req, res) => {
-//   const recipe = await Recipe.findById(req.params.id)
-//     .populate("createdBy", "username profilePicture")
-//     .populate("savedBy", "username");
+/**
+ * @desc Update a recipe.
+ * @route  PUT /api/recipes/update/:id
+ * @param {string} id - Recipe ID.
+ * @access Private (creator or admin)
+ * @returns {Object} - Recipes details.
+ */
+export const updateRecipe = withTransaction(
+  async (
+    req: Request,
+    res: Response,
+    session: mongoose.mongo.ClientSession
+  ) => {
+    // Check for authorization
+    if (!req.user || !req.user._id) {
+      res.status(401);
+      throw new Error("Unauthorized, user information not found");
+    }
 
-//   if (!recipe) {
-//     res.status(404);
-//     throw new Error("Recipe not found");
-//   }
+    // Get the recipe with session
+    const recipe = await Recipe.findById(req.params.id).session(session);
 
-//   res.json(recipe);
-// });
+    // Validate recipe
+    if (!recipe) {
+      res.status(404);
+      throw new Error("Recipe not found");
+    }
 
-// @desc    Update a recipe
-// @route   PUT /api/recipes/:id
-// @access  Private (creator or admin)
-// export const updateRecipe = asyncHandler(async (req, res) => {
-//   const recipe = await Recipe.findById(req.params.id);
+    // Check if the user is the creator or admin
+    if (
+      recipe.createdBy._id.toString() !== req.user._id.toString() &&
+      (req.user as any).role !== "admin"
+    ) {
+      res.status(401);
+      throw new Error("Not authorized to update this recipe");
+    }
 
-//   if (!recipe) {
-//     res.status(404);
-//     throw new Error("Recipe not found");
-//   }
+    // Extract form data
+    const {
+      name,
+      desc,
+      prepTime,
+      difficulty,
+      serving,
+      cuisine,
+      nutritionFacts,
+      ingredients,
+      instructions,
+    } = req.body;
 
-//   // Check if user is creator or admin
-//   if (
-//     recipe.createdBy.toString() !== req.user._id.toString() &&
-//     req.user.role !== "admin"
-//   ) {
-//     res.status(401);
-//     throw new Error("Not authorized to update this recipe");
-//   }
+    // Update scalar fields
+    recipe.name = name || recipe.name;
+    recipe.desc = desc || recipe.desc;
+    recipe.prepTime = prepTime ? Number(prepTime) : recipe.prepTime;
+    recipe.difficulty = difficulty || recipe.difficulty;
+    recipe.serving = serving ? Number(serving) : recipe.serving;
+    recipe.cuisine = cuisine || recipe.cuisine;
 
-//   const {
-//     name,
-//     desc,
-//     prepTime,
-//     difficulty,
-//     serving,
-//     cuisine,
-//     nutritionFacts,
-//     ingredients,
-//     instructions,
-//   } = req.body;
+    // Handle nutritionFacts
+    if (nutritionFacts) {
+      try {
+        const parsedNutrition = JSON.parse(nutritionFacts);
 
-//   recipe.name = name || recipe.name;
-//   recipe.desc = desc || recipe.desc;
-//   recipe.prepTime = prepTime || recipe.prepTime;
-//   recipe.difficulty = difficulty || recipe.difficulty;
-//   recipe.serving = serving || recipe.serving;
-//   recipe.cuisine = cuisine || recipe.cuisine;
-//   recipe.nutritionFacts = nutritionFacts || recipe.nutritionFacts;
-//   recipe.ingredients = ingredients || recipe.ingredients;
-//   recipe.instructions = instructions || recipe.instructions;
+        if (!Array.isArray(parsedNutrition) || parsedNutrition.length === 0) {
+          res.status(400);
+          throw new Error("Nutrition facts must be a non-empty array");
+        }
 
-//   const updatedRecipe = await recipe.save();
+        recipe.nutritionFacts = parsedNutrition as any;
+      } catch (error) {
+        res.status(400);
+        throw new Error("Invalid nutrition facts format");
+      }
+    }
 
-//   res.json(updatedRecipe);
-// });
+    // Handle ingredients
+    if (ingredients) {
+      try {
+        const parsedIngredients = JSON.parse(ingredients);
 
-// @desc    Delete a recipe
-// @route   DELETE /api/recipes/:id
-// @access  Private (creator or admin)
-// export const deleteRecipe = asyncHandler(async (req, res) => {
-//   const recipe = await Recipe.findById(req.params.id);
+        if (
+          !Array.isArray(parsedIngredients) ||
+          parsedIngredients.length === 0
+        ) {
+          res.status(400);
+          throw new Error("Ingredients must be a non-empty array");
+        }
 
-//   if (!recipe) {
-//     res.status(404);
-//     throw new Error("Recipe not found");
-//   }
+        recipe.ingredients = parsedIngredients as any;
+      } catch (error) {
+        res.status(400);
+        throw new Error("Invalid ingredients format");
+      }
+    }
 
-//   // Check if user is creator or admin
-//   if (
-//     recipe.createdBy.toString() !== req.user._id.toString() &&
-//     req.user.role !== "admin"
-//   ) {
-//     res.status(401);
-//     throw new Error("Not authorized to delete this recipe");
-//   }
+    // Handle instructions
+    if (instructions) {
+      try {
+        const parsedInstructions = JSON.parse(instructions);
 
-//   await recipe.remove();
+        if (
+          !Array.isArray(parsedInstructions) ||
+          parsedInstructions.length === 0
+        ) {
+          res.status(400);
+          throw new Error("Instructions must be a non-empty array");
+        }
 
-//   // Remove from all users' favorites
-//   await User.updateMany(
-//     { savedRecipes: recipe._id },
-//     { $pull: { savedRecipes: recipe._id } }
-//   );
+        recipe.instructions = parsedInstructions as any;
+      } catch (error) {
+        res.status(400);
+        throw new Error("Invalid instructions format");
+      }
+    }
 
-//   res.json({ message: "Recipe removed" });
-// });
+    // Handle image update
+    if (req.file) {
+      try {
+        // Optimize and upload image to Cloudinary
+        const optimizedImage = await optimizeImage(req.file.buffer);
+        const uploadResult = await cloudinary.uploader.upload(
+          `data:image/webp;base64,${optimizedImage.toString("base64")}`,
+          {
+            folder: "recipe-share/recipe-images",
+            transformation: [
+              { width: 800, height: 600, crop: "limit", quality: "auto" },
+              { format: "webp" },
+            ],
+          }
+        );
 
-// @desc    Toggle save recipe
-// @route   POST /api/recipes/:id/save
-// @access  Private
-// export const toggleSaveRecipe = asyncHandler(async (req, res) => {
-//   const recipe = await Recipe.findById(req.params.id);
+        // Delete old image if exists
+        if (recipe.image && recipe.image.public_id) {
+          try {
+            await cloudinary.uploader.destroy(recipe.image.public_id);
+          } catch (deleteError) {
+            console.error("Error deleting old image:", deleteError);
+            // Don't fail the whole update if deletion fails
+          }
+        }
 
-//   if (!recipe) {
-//     res.status(404);
-//     throw new Error("Recipe not found");
-//   }
+        // Update image details
+        recipe.image = {
+          url: uploadResult.secure_url,
+          public_id: uploadResult.public_id,
+        };
+      } catch (uploadError) {
+        console.error("Image upload error:", uploadError);
+        res.status(500);
+        throw new Error("Failed to upload new recipe image");
+      }
+    }
 
-//   const user = await User.findById(req.user._id);
-//   const isSaved = user.savedRecipes.includes(recipe._id);
+    // Save the updated recipe within transaction
+    const updatedRecipe = await recipe.save({ session });
 
-//   if (isSaved) {
-//     // Remove from user's saved recipes
-//     user.savedRecipes.pull(recipe._id);
-//     // Remove user from recipe's savedBy
-//     recipe.savedBy.pull(user._id);
-//   } else {
-//     // Add to user's saved recipes
-//     user.savedRecipes.push(recipe._id);
-//     // Add user to recipe's savedBy
-//     recipe.savedBy.push(user._id);
-//   }
+    // Populate creator info
+    const populatedRecipe = await Recipe.populate(updatedRecipe, {
+      path: "createdBy",
+      select: creatorFields,
+    });
 
-//   await user.save();
-//   await recipe.save();
+    res.status(200).json({
+      success: true,
+      message: "Recipe updated successfully",
+      data: populatedRecipe,
+    });
+  }
+);
 
-//   res.json({
-//     isSaved: !isSaved,
-//     savedCount: recipe.savedBy.length,
-//   });
-// });
+/**
+ * @desc Delete a recipe.
+ * @route  DELETE /api/recipes/delete/:id
+ * @param {string} id - Recipe ID.
+ * @access Private (creator or admin)
+ * @returns {Object} - Success message.
+ */
+export const deleteRecipe = withTransaction(
+  async (
+    req: Request,
+    res: Response,
+    session: mongoose.mongo.ClientSession
+  ) => {
+    // Check for authorization
+    if (!req.user || !req.user._id) {
+      res.status(401);
+      throw new Error("Unauthorized, user information not found");
+    }
+
+    // Get the recipe with transaction session
+    const recipe = await Recipe.findById(req.params.id)
+      .session(session)
+      .populate("createdBy", "_id"); // Only populate necessary fields
+
+    // Validate recipe
+    if (!recipe) {
+      res.status(404);
+      throw new Error("Recipe not found");
+    }
+
+    // Convert both IDs to string for safe comparison
+    const recipeCreatorId = recipe.createdBy._id.toString();
+    const currentUserId = req.user._id.toString();
+
+    // Authorization check
+    const isCreator = recipeCreatorId === currentUserId;
+    const isAdmin = (req.user as any).role === "admin";
+
+    if (!isCreator && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to delete this recipe",
+      });
+    }
+
+    //  Store values needed after deletion
+    const imagePublicId = recipe.image?.public_id;
+
+    // Delete the recipe
+    await recipe.deleteOne({ session });
+
+    // Remove from users' saved recipes
+    await User.updateMany(
+      { savedRecipes: recipe._id },
+      { $pull: { savedRecipes: recipe._id } },
+      { session } // Include session in the update
+    );
+
+    // Delete image from Cloudinary AFTER successful database operations
+    if (imagePublicId) {
+      try {
+        await cloudinary.uploader.destroy(imagePublicId);
+      } catch (cloudinaryError) {
+        console.error("Cloudinary deletion failed:", cloudinaryError);
+        // Log but don't fail the request since DB operations succeeded
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Recipe successfully removed",
+    });
+  }
+);
+
+/**
+ * @desc Toggle save recipe.
+ * @route  POST /api/recipe/save
+ * @param {string} id - Recipe ID.
+ * @access Private (any logged-in user can save/unsave)
+ * @returns {Object} - Success message, Saved counts.
+ */
+export const toggleSaveRecipe = withTransaction(
+  async (
+    req: Request,
+    res: Response,
+    session: mongoose.mongo.ClientSession
+  ) => {
+    // Check for authorization
+    if (!req.user || !req.user._id) {
+      res.status(401);
+      throw new Error("Unauthorized, user information not found");
+    }
+
+    if (!req.body.recipeId) {
+      res.status(400);
+      throw new Error("Please provide a recipe ID");
+    }
+
+    const userId = req.user._id;
+    const recipeId = req.body.recipeId;
+
+    // Get both user and recipe with transaction session
+    const user = await User.findById(userId).session(session);
+    const recipe = await Recipe.findById(recipeId)
+      .populate("createdBy", "_id")
+      .session(session); // Only populate necessary fields
+
+    // Validate user
+    if (!user) {
+      res.status(404);
+      throw new Error("User not found");
+    }
+
+    // Validate recipe
+    if (!recipe) {
+      res.status(404);
+      throw new Error("Recipe not found");
+    }
+
+    // Prevent users from saving their own recipes
+    if (recipe && recipe.createdBy._id.toString() === userId.toString()) {
+      res.status(400);
+      throw new Error("You cannot save your own recipe");
+    }
+
+    // Check if recipe is already saved
+    const isSaved = recipe.savedBy.some(
+      (id) => id.toString() === userId.toString()
+    );
+
+    let updatedRecipe;
+    let updatedUser;
+
+    if (isSaved) {
+      // Remove from saved recipes
+      updatedRecipe = await Recipe.findByIdAndUpdate(
+        recipeId,
+        { $pull: { savedBy: userId } },
+        { new: true, session }
+      );
+
+      updatedUser = await User.findByIdAndUpdate(
+        userId,
+        { $pull: { savedRecipes: recipeId } },
+        { new: true, session }
+      );
+    } else {
+      // Add to saved recipes
+      updatedRecipe = await Recipe.findByIdAndUpdate(
+        recipeId,
+        { $addToSet: { savedBy: userId } },
+        { new: true, session }
+      );
+
+      updatedUser = await User.findByIdAndUpdate(
+        userId,
+        { $addToSet: { savedRecipes: recipeId } },
+        { new: true, session }
+      );
+    }
+
+    // Get updated save count
+    const saveCount = updatedRecipe?.savedBy.length || 0;
+
+    res.status(200).json({
+      success: true,
+      message: `Recipe ${isSaved ? "unsaved" : "saved"} successfully`,
+      isSaved: !isSaved,
+      saveCount,
+    });
+  }
+);

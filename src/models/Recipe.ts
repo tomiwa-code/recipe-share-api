@@ -1,37 +1,46 @@
 import mongoose from "mongoose";
 
-const nutritionFactsSchema = new mongoose.Schema({
-  label: {
-    type: String,
-    required: true,
+const nutritionFactsSchema = new mongoose.Schema(
+  {
+    label: {
+      type: String,
+      required: true,
+    },
+    value: {
+      type: String,
+      required: true,
+    },
   },
-  value: {
-    type: String,
-    required: true,
-  },
-});
+  { _id: false } // Prevent unnecessary IDs
+);
 
-const ingredientsSchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true,
+const ingredientsSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+    },
+    amount: {
+      type: String,
+      required: true,
+    },
+    unit: {
+      type: String,
+      required: true,
+    },
   },
-  amount: {
-    type: String,
-    required: true,
-  },
-  unit: {
-    type: String,
-    required: true,
-  },
-});
+  { _id: false } // Prevent unnecessary IDs
+);
 
-const instructionsSchema = new mongoose.Schema({
-  step: {
-    type: String,
-    required: true,
+const instructionsSchema = new mongoose.Schema(
+  {
+    step: {
+      type: String,
+      required: true,
+    },
   },
-});
+  { _id: false } // Prevent unnecessary IDs
+);
 
 const recipeSchema = new mongoose.Schema(
   {
@@ -85,9 +94,9 @@ const recipeSchema = new mongoose.Schema(
         ref: "User",
       },
     ],
-    imageUrl: {
-      type: String,
-      required: true,
+    image: {
+      public_id: String,
+      url: String,
     },
     cuisine: {
       type: String,
@@ -102,10 +111,26 @@ const recipeSchema = new mongoose.Schema(
   }
 );
 
-// Indexes for search and filtering
-recipeSchema.index({ name: "text", desc: "text", cuisine: "text" });
+// Indexes for search
+recipeSchema.index(
+  {
+    name: "text",
+    desc: "text",
+    cuisine: "text",
+  },
+  {
+    name: "searchIndex",
+    weights: {
+      name: 3,
+      desc: 2,
+      cuisine: 1,
+    },
+  }
+);
+
+// Index for filtering/sorting
 recipeSchema.index({ difficulty: 1, prepTime: 1, rating: -1 });
+recipeSchema.index({ createdBy: 1, createdAt: -1 });
 
 const Recipe = mongoose.model("Recipe", recipeSchema);
-
 export default Recipe;

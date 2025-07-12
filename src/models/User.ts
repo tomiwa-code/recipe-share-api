@@ -34,7 +34,8 @@ const userSchema = new mongoose.Schema(
       minlength: 8,
     },
     avatar: {
-      type: String,
+      public_id: String,
+      url: String,
     },
     role: {
       type: String,
@@ -51,26 +52,11 @@ const userSchema = new mongoose.Schema(
       default: "Earth",
       maxlength: 30,
     },
-    stats: {
-      recipesShared: {
-        type: Number,
-        default: 0,
-        min: 0,
-      },
-      totalStar: {
-        type: Number,
-        default: 0,
-        min: 0,
-      },
-      recipesSaved: {
-        type: Number,
-        default: 0,
-        min: 0,
-      },
-    },
     coverPhoto: {
-      type: String,
+      public_id: String,
+      url: String,
     },
+    savedRecipes: [{ type: mongoose.Schema.Types.ObjectId, ref: "Recipe" }],
   },
   {
     timestamps: true,

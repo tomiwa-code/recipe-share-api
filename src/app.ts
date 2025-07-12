@@ -6,7 +6,6 @@ import connectDB from "./utils/mongodb";
 import cors from "cors";
 import arcjetMiddleware from "./middlewares/arcjet.middleware";
 
-
 import userRouter from "./routes/user.route";
 import authRouter from "./routes/auth.route";
 import recipeRouter from "./routes/recipe.route";
@@ -26,12 +25,14 @@ app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 app.use(cors(corsOptions));
 app.use(arcjetMiddleware);
-app.use(errorMiddleware);
 
 // Routes
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/user", userRouter);
 app.use("/api/v1/recipe", recipeRouter);
+
+// Error handling middleware should be the last middleware
+app.use(errorMiddleware);
 
 // Basic route
 app.get("/", (_, res: Response) => {

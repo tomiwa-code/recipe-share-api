@@ -1,56 +1,55 @@
 import { NextFunction, Request, Response } from "express";
 
-type errorType = {
-  name: string;
-  message: string;
-  stack?: string;
+// Define strong error types
+type AppError = Error & {
   statusCode?: number;
   code?: number;
   keyValue?: { [key: string]: string };
+  errors?: Record<string, { message: string }>;
 };
 
 const errorMiddleware = (
-  err: Error,
+  err: AppError,
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    let error: errorType = { ...err };
+    const statusCode = err.statusCode || 500;
+    let message = err.message || "Server Error";
 
-    error.message = err.message;
-    console.error(err);
+    console.error(`[${new Date().toISOString()}] Error:`, {
+      message: err.message,
+      stack: err.stack,
+      statusCode,
+      path: req.path,
+      method: req.method,
+    });
 
-    // Mongoose bad ObjectId
+    // Handle specific error types
     if (err.name === "CastError") {
-      const message = `Resource not found.`;
-      error = new Error(message);
-      error.statusCode = 404;
-    }
-
-    // Mongoose duplicate key
-    if (err.name === "MongoServerError" && (err as any).code === 11000) {
-      const message = `Duplicate field value entered.`;
-      error = new Error(message);
-      error.statusCode = 400;
-    }
-
-    // Mongoose validation error
-    if (err.name === "ValidationError") {
-      const message = Object.values((err as any).errors)
-        .map((val: any) => val.message)
+      message = "Resource not found.";
+    } else if (err.name === "MongoServerError" && err.code === 11000) {
+      const field = err.keyValue ? Object.keys(err.keyValue)[0] : "field";
+      message = `Duplicate value entered for ${field}. Please use another value.`;
+    } else if (err.name === "ValidationError" && err.errors) {
+      message = Object.values(err.errors)
+        .map((val) => val.message)
         .join(", ");
-      error = new Error(message);
-      error.statusCode = 400;
     }
 
-    res.status(error.statusCode || 500).json({
+    res.status(statusCode).json({
       success: false,
-      message: error.message || "Server Error",
-      stack: process.env.NODE_ENV === "production" ? null : error.stack,
+      message,
+      stack: process.env.NODE_ENV === "production" ? undefined : err.stack,
     });
   } catch (error) {
-    next(error);
+    // Fallback for errors within the error handler
+    console.error("CRITICAL: Error in error middleware", error);
+    res.status(500).json({
+      success: false,
+      message: "Critical server failure",
+    });
   }
 };
 

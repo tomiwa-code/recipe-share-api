@@ -81,8 +81,14 @@ export const signUp = withTransaction(
           name,
           email,
           username,
-          avatar: DEFAULT_AVATAR,
-          coverPhoto: DEFAULT_COVER_PHOTO,
+          avatar: {
+            public_id: "",
+            url: DEFAULT_AVATAR,
+          },
+          coverPhoto: {
+            public_id: "",
+            url: DEFAULT_COVER_PHOTO,
+          },
           password: hashedPassword,
         },
       ],
